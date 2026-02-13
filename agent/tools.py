@@ -2,110 +2,153 @@ import os
 import json
 import random
 import re
+import requests
+from typing import List, Dict, Any, TypedDict
 from langchain_core.tools import tool
-from langchain_ollama import ChatOllama
 from langchain_core.messages import HumanMessage
+from dotenv import load_dotenv
 
-translation_model = ChatOllama(
-    model="llama3.2:3b",
-    temperature=0.7
-)
+# Import supported LLMs
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
+from langchain_ollama import ChatOllama
+
+load_dotenv()
+
+# --- Configuration ---
+ANKI_CONNECT_URL = "http://127.0.0.1:8765"
+
+
+def get_translation_model():
+    """Factory to get the translation model based on environment variables."""
+    provider = os.getenv("LLM_PROVIDER", "gemini").lower()
+    model_name = os.getenv("LLM_MODEL")
+
+    if provider == "gemini":
+        return ChatGoogleGenerativeAI(
+            model=model_name or "gemini-2.5-flash",
+            temperature=0.3
+        )
+    elif provider == "openai":
+        return ChatOpenAI(model=model_name or "gpt-4o", temperature=0.3)
+    elif provider == "ollama":
+        return ChatOllama(model=model_name or "llama3.2:3b", temperature=0.3)
+    else:
+        return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
+
+
+# --- TOOLS ---
 
 @tool
-def get_n_random_words(language: str, n:int) -> list:
-    """
-    Selects a specified number of random words from a language-specific word list.
-
-    The function reads a JSON file containing words for the specified language from
-    a predefined directory. It then selects `n` random words from the file and
-    returns them in a list.
-
-    :param language: A string representing the language for which to fetch the word list.
-    :param n: An integer specifying the number of random words to retrieve.
-    :return: A list containing `n` randomly selected words.
-    """
-
-    path = os.path.join("data", f"{language}", "word-list-cleaned.json")
-    with open(path) as f:
-        word_list = json.load(f)
-
-    random_word_dict = {k: word_list[k] for k in random.sample(list(word_list.keys()), n)}
-    random_words = [item["word"] for item in random_word_dict.values()]
-
-    return random_words
-
-@tool
-def get_n_random_words_by_difficulty_level(language: str,
-                                           difficulty_level: str,
-                                           n: int
-                                           ) -> list:
-    """
-    Retrieves a specified number of random words filtered by a given difficulty level
-    from a word list corresponding to a specific language. The function reads the
-    word list from a JSON file located in the directory `data/{language}/word-list-cleaned.json`.
-
-    :param language: The language of the word list to be used.
-    :type language: str
-    :param difficulty_level: The difficulty level to filter words by. Possible values
-        depend on the data structure in the JSON file. The only valid values are "beginner",
-        "intermediate" and "advanced".
-    :type difficulty_level: str
-    :param n: The number of random words to retrieve.
-    :type n: int
-    :return: A list containing `n` random words filtered by the specified difficulty level.
-    :rtype: list
-    """
+def get_n_random_words(language: str, n: int) -> List[str]:
+    """Selects a specified number of random words from a language-specific word list."""
+    n = int(n)
     path = os.path.join("data", f"{language}", "word-list-cleaned.json")
 
-    with open(path) as f:
+    if not os.path.exists(path):
+        return [f"Error: File not found at {path}"]
+
+    with open(path, 'r', encoding='utf-8') as f:
         word_list = json.load(f)
 
-    words_filtered_by_difficulty = {k: v for k, v in word_list.items() if v.get("word_difficulty") == difficulty_level}
+    keys = list(word_list.keys())
+    if n > len(keys): n = len(keys)
 
-    random_word_dict = {k: words_filtered_by_difficulty[k] for k in
-                        random.sample(list(words_filtered_by_difficulty.keys()), n)}
-    random_words = [item["word"] for item in random_word_dict.values()]
+    random_keys = random.sample(keys, n)
+    return [word_list[k]["word"] for k in random_keys]
 
-    return random_words
 
 @tool
-def translate_word(random_words:str, source_language: str, target_language: str) -> str:
-    """
-    Translates a list of words from a source language to a target language using
-    a language model. The method ensures output is in the expected JSON format,
-    containing translations corresponding to the provided input words.
+def get_n_random_words_by_difficulty_level(language: str, difficulty_level: str, n: int) -> List[str]:
+    """Retrieves random words filtered by difficulty (beginner, intermediate, advanced)."""
+    n = int(n)
+    path = os.path.join("data", f"{language}", "word-list-cleaned.json")
 
-    :param random_words: A list of words to be translated.
-    :param source_language: The language of the input words.
-    :param target_language: The language to translate the words into.
-    :return: A dictionary containing the translations with the structure:
-             {"translations": [{"source": "<original>", "target": "<translated>"}, ...]}.
-    """
+    if not os.path.exists(path):
+        return [f"Error: File not found at {path}"]
+
+    with open(path, 'r', encoding='utf-8') as f:
+        word_list = json.load(f)
+
+    filtered = {k: v for k, v in word_list.items() if v.get("word_difficulty", "").lower() == difficulty_level.lower()}
+
+    if not filtered:
+        return [f"Error: No words found for {difficulty_level} in {language}"]
+
+    keys = list(filtered.keys())
+    if n > len(keys): n = len(keys)
+
+    random_keys = random.sample(keys, n)
+    return [filtered[k]["word"] for k in random_keys]
+
+
+@tool
+def translate_words(random_words: List[str], source_language: str, target_language: str) -> Dict[str, Any]:
+    """Translates a list of words. Returns a dictionary with 'translations' list."""
+    print(f"DEBUG: Translating {len(random_words)} words...")
+    model = get_translation_model()
+
     prompt = (
-        f"You are a precise translation engine.\n"
-        f"Translate each of the following {len(random_words)} words from {source_language} to {target_language}.\n"
-        f"Return ONLY valid JSON with this exact structure:\n"
-        f'{{"translations": [{{"source": "<original>", "target": "<translated>"}}, ...]}}\n'
-        f"No explanations, no extra fields, no markdown.\n"
+        f"Translate these {len(random_words)} words from {source_language} to {target_language}.\n"
+        f"Return ONLY valid JSON: {{ \"translations\": [ {{ \"source\": \"word\", \"target\": \"translation\" }} ] }}\n"
         f"Words: {json.dumps(random_words, ensure_ascii=False)}"
     )
 
-    response = translation_model.invoke([HumanMessage(content=prompt)])
-    text = getattr(response, "content", str(response))
-
-    # Try to parse JSON strictly; if it fails, attempt to extract the first JSON object.
     try:
-        parsed = json.loads(text)
-    except Exception:
+        response = model.invoke([HumanMessage(content=prompt)])
+        text = response.content
         match = re.search(r"\{.*\}", text, re.DOTALL)
-        parsed = json.loads(match.group(0)) if match else {}
+        if match:
+            return json.loads(match.group(0))
+        return {"error": "Invalid JSON response", "raw": text}
+    except Exception as e:
+        return {"error": str(e)}
 
-    translations_list = parsed.get("translations", [])
-    # Build a mapping from the model output
-    model_map = {item.get("source", ""): item.get("target", "") for item in translations_list if isinstance(item, dict)}
 
-    # Ensure we return translations in the same order as input; fall back to identity if missing
-    ordered_translations = [
-        {"source": w, "target": model_map.get(w, model_map.get(w.capitalize(), w))}
-        for w in random_words
-    ]
+@tool
+def create_anki_stack(deck_name: str, cards: List[Dict[str, str]]) -> str:
+    """
+    Creates an Anki deck and adds multiple cards in ONE go.
+
+    Args:
+        deck_name: Name of the deck (e.g., "Spanish::Easy")
+        cards: List of dicts, e.g., [{"front": "hola", "back": "hello"}, ...]
+    """
+    print(f"DEBUG: Batch creating deck '{deck_name}' with {len(cards)} cards...")
+
+    # 1. Create Deck
+    try:
+        requests.post(ANKI_CONNECT_URL, json={
+            "action": "createDeck",
+            "version": 6,
+            "params": {"deck": deck_name}
+        })
+    except Exception as e:
+        return f"Error connecting to Anki: {e}. Is Anki running?"
+
+    # 2. Add Cards (Local loop, super fast)
+    success_count = 0
+    errors = []
+
+    for card in cards:
+        payload = {
+            "action": "addNote",
+            "version": 6,
+            "params": {
+                "note": {
+                    "deckName": deck_name,
+                    "modelName": "Basic",
+                    "fields": {
+                        "Front": card.get("source", card.get("front", "")),
+                        "Back": card.get("target", card.get("back", ""))
+                    }
+                }
+            }
+        }
+        resp = requests.post(ANKI_CONNECT_URL, json=payload).json()
+        if resp.get("error"):
+            errors.append(resp["error"])
+        else:
+            success_count += 1
+
+    return f"Success! Created deck '{deck_name}' and added {success_count} cards. Errors: {len(errors)}"
