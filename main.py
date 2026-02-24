@@ -13,8 +13,8 @@ from agent.tools import (
     get_n_random_words,
     get_n_random_words_by_difficulty_level,
     translate_words,
-    create_anki_stack,  # <--- The new batch tool
-    get_translation_model  # Helper to reuse LLM logic
+    create_anki_stack,  
+    get_translation_model  
 )
 
 load_dotenv()
@@ -81,7 +81,7 @@ async def main():
     react_graph = await build_graph()
 
     # Request 5 words to test (safe for Free Tier)
-    user_prompt = "Get 10 difficult words in Spanish, translate them to English, and create a Spanish::Easy Anki deck."
+    user_prompt = "Get 10 intermediate words in korean, translate them to Spanish, and create a Spanish::Easy Anki deck."
 
     messages = [HumanMessage(content=user_prompt)]
     result = await react_graph.ainvoke({"messages": messages})
