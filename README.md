@@ -119,7 +119,7 @@ The agent supports multiple LLM providers configured via environment variables:
 
 ```bash
 # In .env file
-LLM_PROVIDER=gemini        # Options: gemini, openai, ollama
+LLM_PROVIDER=gemini        # Options: gemini, openai
 LLM_MODEL=gemini-2.5-flash # Model specification (optional, uses defaults if not set)
 ```
 
@@ -165,7 +165,7 @@ The Jupyter notebook processes raw word lists through:
 1. **Clone the repository**
 
    ```bash
-   git clone <repo-url>
+   git clone https://github.com/subhashkrpro/language-learning-agent
    cd language-learning-agent
    ```
 2. **Create virtual environment** (recommended)
